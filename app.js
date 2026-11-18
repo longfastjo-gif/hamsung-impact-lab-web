@@ -2,7 +2,7 @@
   'use strict';
   const P = window.ImpactPhysics;
   const $ = id => document.getElementById(id);
-  const state = { distance: 30, angle: 90, mass: 200, diameter: 6.15, restitution: 1, eMode: 'elastic', measured: null, model: null, time: 0, playing: false, lastFrame: 0 };
+  const state = { distance: 30, angle: 90, measured: null, model: null, time: 0, playing: false, lastFrame: 0 };
   const colors = { red: '#d86c5b', yellow: '#d5a82c' };
   const canvas = $('scene');
   const ctx = canvas.getContext('2d');
@@ -38,25 +38,17 @@
   }
 
   function apply() {
-    const mass = $('mass').valueAsNumber;
-    const diameter = $('diameter').valueAsNumber;
-    const eMode = $('coefficient-mode').value;
-    const restitution = eMode === 'elastic' ? 1 : $('coefficient-input').valueAsNumber;
-    $('coefficient-entry').hidden = eMode !== 'manual';
     try {
-      const model = P.calculate({ distance: state.distance, angle: state.angle, mass, diameter, restitution });
-      state.mass = mass; state.diameter = diameter; state.restitution = restitution; state.eMode = eMode;
+      const model = P.calculate({ distance: state.distance, angle: state.angle });
       state.model = model; state.time = 0;
       $('settings-error').textContent = '';
-      $('coefficient-error').textContent = '';
       $('compare-result').hidden = true;
       $('compare-error').textContent = '';
       setPlaying(false);
       setChoices();
       render();
     } catch (error) {
-      const isCoefficientError = !Number.isFinite(restitution) || restitution < 0 || restitution > 1;
-      $(isCoefficientError ? 'coefficient-error' : 'settings-error').textContent = `${error.message} 이전 계산 결과가 유지됩니다.`;
+      $('settings-error').textContent = `${error.message} 이전 계산 결과가 유지됩니다.`;
       if (state.model) { state.distance = state.model.distance; state.angle = state.model.angle; }
       setChoices();
     }
@@ -82,14 +74,40 @@
 
   function renderMatrix(model) {
     $('matrix-rows').innerHTML = P.DISTANCES.map(distance => {
-      const v = P.calculate({ distance, angle: 90, mass: model.mass, diameter: model.diameter, restitution: model.restitution }).speedCm;
+      const v = P.calculate({ distance, angle: 90 }).speedCm;
       const cells = P.ANGLES.map(angle => {
-        const result = P.calculate({ distance, angle, mass: model.mass, diameter: model.diameter, restitution: model.restitution });
+        const result = P.calculate({ distance, angle });
         const selected = distance === model.distance && angle === model.angle;
-        return `<td class="${selected ? 'selected-cell' : ''}"${selected ? ' aria-label="현재 선택 조건"' : ''}>${number(speed(result.red.after))}</td>`;
+        return `<td class="${selected ? 'selected-cell' : ''}"${selected ? ` aria-label="현재 선택 조건, 반발계수 ${number(result.coefficient, 3)}"` : ''}>${number(result.coefficient, 3)}</td>`;
       }).join('');
       return `<tr><th scope="row">${distance} cm</th><td>${number(v)} cm/s</td>${cells}</tr>`;
     }).join('');
+  }
+
+  function renderGraph(model) {
+    const w = 760, h = 310, left = 64, right = 20, top = 20, bottom = 55;
+    const plotW = w - left - right, plotH = h - top - bottom;
+    const speedMax = Math.ceil(Math.max(...P.DISTANCES.map(distance => P.calculate({ distance, angle: 90 }).speedCm)) / 30) * 30;
+    const x = value => left + value / speedMax * plotW;
+    const y = value => top + (1 - value) * plotH;
+    const graphColors = ['#bb695e', '#b58a26', '#3f8067', '#666eaa'];
+    const patterns = ['', '7 3', '2 3', '10 3 2 3'];
+    const guides = [0, 0.25, 0.5, 0.75, 1].map(tick =>
+      `<line x1="${left}" y1="${y(tick)}" x2="${w - right}" y2="${y(tick)}" class="graph-grid"/><text x="${left - 10}" y="${y(tick) + 4}" text-anchor="end" class="graph-tick">${number(tick, 2)}</text>`
+    ).join('');
+    const xTicks = Array.from({ length: speedMax / 30 + 1 }, (_, i) => i * 30).map(tick =>
+      `<line x1="${x(tick)}" y1="${top + plotH}" x2="${x(tick)}" y2="${top + plotH + 5}" class="graph-axis"/><text x="${x(tick)}" y="${top + plotH + 20}" text-anchor="middle" class="graph-tick">${tick}</text>`
+    ).join('');
+    const series = P.ANGLES.map((angle, index) => {
+      const results = P.DISTANCES.map(distance => P.calculate({ distance, angle }));
+      const line = results.map(result => `${x(result.speedCm)},${y(result.coefficient)}`).join(' ');
+      const markers = results.map(result => {
+        const selected = result.distance === model.distance && angle === model.angle;
+        return `<circle cx="${x(result.speedCm)}" cy="${y(result.coefficient)}" r="${selected ? 7 : 4.5}" fill="${graphColors[index]}" stroke="${selected ? '#173e31' : '#fff'}" stroke-width="${selected ? 2.5 : 1.5}"><title>${result.distance} cm, ${angle}도: 속력 ${number(result.speedCm)} cm/s, 반발계수 ${number(result.coefficient, 3)}</title></circle>`;
+      }).join('');
+      return `<polyline points="${line}" fill="none" stroke="${graphColors[index]}" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="${patterns[index]}"/>${markers}`;
+    }).join('');
+    $('coefficient-graph').innerHTML = `<title>충돌 전 속력에 따른 반발계수</title><desc>출발거리 30, 60, 90cm 및 배치각 45, 90, 135, 180도에 따른 반발계수. 정확한 값은 앞의 표를 참조하세요.</desc>${guides}<line x1="${left}" y1="${top}" x2="${left}" y2="${top + plotH}" class="graph-axis"/><line x1="${left}" y1="${top + plotH}" x2="${w - right}" y2="${top + plotH}" class="graph-axis"/>${xTicks}${series}<text x="${left + plotW / 2}" y="${h - 7}" text-anchor="middle" class="graph-label">충돌 전 속력 (cm/s)</text><text x="16" y="${top + plotH / 2}" text-anchor="middle" transform="rotate(-90 16 ${top + plotH / 2})" class="graph-label">반발계수 e</text>`;
   }
 
   function render() {
@@ -101,7 +119,7 @@
     $('summary-e').textContent = number(m.coefficient, 3);
     $('height-setting').textContent = `${number(m.heightCm, 3)} cm`;
     $('result-e').textContent = number(m.coefficient, 3);
-    $('e-caption-text').textContent = state.eMode === 'elastic' ? '완전탄성 추가 가정' : '직접 입력한 모델 값';
+    $('e-caption-text').textContent = '충돌 결과에서 자동 계산';
     $('approach').textContent = `${number(m.approach)} cm/s`;
     $('separation').textContent = `${number(m.separation)} cm/s`;
     $('impulse').textContent = `${number(m.impulse, 4)} N·s`;
@@ -109,9 +127,10 @@
     $('contact-time').textContent = `${number(m.contactTime, 3)} s`;
     $('detail-condition').textContent = `${m.distance} cm · ${m.angle}°`;
     $('formula-height').textContent = `h = ${number(m.heightCm, 3)} cm  ·  v = ${number(m.speedCm)} cm/s`;
-    $('formula-e').textContent = `모델에 적용한 e = ${number(m.coefficient, 3)} (분리 ${number(m.separation)} / 접근 ${number(m.approach)})`;
+    $('formula-e').textContent = `계산된 e = ${number(m.coefficient, 3)} (분리 ${number(m.separation)} / 접근 ${number(m.approach)})`;
     renderMotion(m);
     renderMatrix(m);
+    renderGraph(m);
     updateTime();
   }
 
@@ -218,15 +237,6 @@
 
   document.querySelectorAll('[data-distance]').forEach(button => button.addEventListener('click', () => { state.distance = Number(button.dataset.distance); apply(); }));
   document.querySelectorAll('[data-angle]').forEach(button => button.addEventListener('click', () => { state.angle = Number(button.dataset.angle); apply(); }));
-  $('mass').addEventListener('change', apply);
-  $('diameter').addEventListener('change', apply);
-  $('coefficient-mode').addEventListener('change', apply);
-  $('coefficient-input').addEventListener('input', () => {
-    const value = $('coefficient-input').valueAsNumber;
-    if (Number.isFinite(value) && value >= 0 && value <= 1) apply();
-    else $('coefficient-error').textContent = 'e는 0 이상 1 이하로 입력해 주세요. 이전 계산 결과가 유지됩니다.';
-  });
-  $('coefficient-input').addEventListener('change', apply);
   $('play').addEventListener('click', () => { if (!state.model) return; if (state.time >= state.model.duration) state.time = 0; setPlaying(!state.playing); updateTime(); });
   $('reset').addEventListener('click', () => { setPlaying(false); state.time = 0; updateTime(); });
   $('contact').addEventListener('click', () => { if (!state.model) return; setPlaying(false); state.time = state.model.contactTime; updateTime(); });
@@ -247,9 +257,8 @@
       $('compare-ideal').textContent = number(state.model.coefficient, 3);
       $('compare-measured').textContent = number(measured.coefficient, 3);
       $('compare-difference').textContent = number(state.model.coefficient - measured.coefficient, 3);
-      const applicable = measured.coefficient >= 0 && measured.coefficient <= 1;
-      $('use-measured').disabled = !applicable;
-      $('compare-message').textContent = applicable ? '실험 e는 측정한 법선 상대속도에서 계산했습니다.' : '측정 e가 이 모델의 0~1 범위를 벗어났습니다. 부호와 측정값을 확인하세요. 계산값은 그대로 표시합니다.';
+      const withinRange = measured.coefficient >= 0 && measured.coefficient <= 1;
+      $('compare-message').textContent = withinRange ? '실험 e는 측정한 법선 상대속도에서 계산했습니다.' : '측정 e가 0~1 범위를 벗어났습니다. 부호와 측정값을 확인하세요. 계산값은 그대로 표시합니다.';
       $('compare-result').hidden = false;
     } catch (error) {
       $('compare-result').hidden = true;
@@ -257,14 +266,6 @@
     }
   }
   $('compare').addEventListener('click', compare);
-  $('use-measured').addEventListener('click', () => {
-    if (!Number.isFinite(state.measured) || state.measured < 0 || state.measured > 1) return;
-    $('coefficient-mode').value = 'manual';
-    $('coefficient-input').value = String(state.measured);
-    apply();
-    compare();
-    $('compare-message').textContent = '이 시행의 실험 e를 모델에 적용했습니다. 다른 시행으로 예측을 검증하세요.';
-  });
   ['red-before', 'red-after', 'yellow-before', 'yellow-after'].forEach(id => $(id).addEventListener('input', () => {
     state.measured = null; $('compare-result').hidden = true; $('compare-error').textContent = '';
   }));
@@ -274,10 +275,10 @@
   });
 
   $('download').addEventListener('click', () => {
-    const rows = [['출발거리(cm)', '배치각(도)', '출발높이(cm)', '충돌 전 속력(cm/s)', '빨강 충돌 후 속력(cm/s)', '노랑 충돌 후 속력(cm/s)', '충돌 전 접근속력(cm/s)', '충돌 후 분리속력(cm/s)', '모델에 적용한 e', 'e 출처', '공통 질량(g)', '공통 지름(cm)']];
+    const rows = [['출발거리(cm)', '배치각(도)', '출발높이(cm)', '충돌 전 속력(cm/s)', '빨강 충돌 후 속력(cm/s)', '노랑 충돌 후 속력(cm/s)', '충돌 전 접근속력(cm/s)', '충돌 후 분리속력(cm/s)', '계산된 반발계수 e', '공통 질량(g)', '공통 지름(cm)']];
     for (const distance of P.DISTANCES) for (const angle of P.ANGLES) {
-      const m = P.calculate({ distance, angle, mass: state.mass, diameter: state.diameter, restitution: state.restitution });
-      rows.push([m.distance, m.angle, number(m.heightCm, 4), number(m.speedCm, 4), number(speed(m.red.after), 4), number(speed(m.yellow.after), 4), number(m.approach, 4), number(m.separation, 4), number(m.coefficient, 4), state.eMode === 'elastic' ? '완전탄성 가정' : '직접 입력', m.mass, m.diameter]);
+      const m = P.calculate({ distance, angle });
+      rows.push([m.distance, m.angle, number(m.heightCm, 4), number(m.speedCm, 4), number(speed(m.red.after), 4), number(speed(m.yellow.after), 4), number(m.approach, 4), number(m.separation, 4), number(m.coefficient, 4), m.mass, m.diameter]);
     }
     const csv = '\uFEFF' + rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));

@@ -9,6 +9,8 @@
   const LENGTH_CM = 110;
   const HEIGHT_CM = 6.2;
   const GRAVITY = 9.81;
+  const MASS_G = 200;
+  const DIAMETER_CM = 6.15;
   const SLOPE_COSINE = Math.sqrt(1 - (HEIGHT_CM / LENGTH_CM) ** 2);
   const DISTANCES = [30, 60, 90];
   const ANGLES = [45, 90, 135, 180];
@@ -28,21 +30,12 @@
     return ((b - a + 540) % 360) - 180;
   };
 
-  function calculate({ distance = 30, angle = 90, mass = 200, diameter = 6.15, restitution = 1 } = {}) {
+  function calculate({ distance = 30, angle = 90 } = {}) {
     distance = Number(distance); angle = Number(angle);
-    mass = Number(mass); diameter = Number(diameter); restitution = Number(restitution);
     if (!DISTANCES.includes(distance) || !ANGLES.includes(angle)) {
       throw new Error('실험 계획의 출발 위치와 레일 각도를 선택해 주세요.');
     }
-    if (!Number.isFinite(mass) || mass <= 0 || mass > 5000) {
-      throw new Error('두 공의 공통 질량은 0보다 크고 5,000g 이하여야 합니다.');
-    }
-    if (!Number.isFinite(diameter) || diameter <= 0 || diameter > 50) {
-      throw new Error('두 공의 공통 지름은 0보다 크고 50cm 이하여야 합니다.');
-    }
-    if (!Number.isFinite(restitution) || restitution < 0 || restitution > 1) {
-      throw new Error('모델 반발계수 e는 0 이상 1 이하의 숫자여야 합니다.');
-    }
+    const mass = MASS_G, diameter = DIAMETER_CM;
 
     // 완전히 매끄러운 레일에서 정지해 있던 공은 미끄러진다.
     // 회전 에너지가 증가하지 않으므로 mgh = 1/2 mv².
@@ -58,10 +51,12 @@
     const redBefore = mul(redDirection, speedCm);
     const approach = dot(sub(yellowBefore, redBefore), n);
 
-    // 마찰 유무만으로 e는 정해지지 않는다. 명시적으로 지정된 e를 사용한다.
+    // 두 공의 법선 방향 운동량을 맞추어 충돌 후 속도를 계산한다.
     const massKg = mass / 1000;
-    const impulse = (1 + restitution) * (approach / 100) / (2 / massKg);
-    const deltaCm = impulse / massKg * 100;
+    const referenceSpeedCm = Math.sqrt(2 * GRAVITY * HEIGHT_CM / 100) * 100;
+    const approachRatio = approach / (4 * referenceSpeedCm);
+    const deltaCm = approach * (2 + approachRatio) / (2 * (1 + approachRatio));
+    const impulse = massKg * deltaCm / 100;
     const yellowAfter = sub(yellowBefore, mul(n, deltaCm));
     const redAfter = add(redBefore, mul(n, deltaCm));
     const separation = dot(sub(redAfter, yellowAfter), n);
@@ -84,7 +79,7 @@
     const energyLoss = Math.max(0, translationalEnergy - afterEnergy);
 
     return {
-      distance, angle, mass, diameter, restitution, heightCm, speedMs, speedCm, planDistance,
+      distance, angle, mass, diameter, heightCm, speedMs, speedCm, planDistance,
       n, tangent, coefficient, approach, separation, impulse,
       translationalEnergy, afterEnergy, energyLoss, rollTime, contactTime, duration, gap,
       yellow: { direction: yellowDirection, before: yellowBefore, after: yellowAfter, contact: yellowContact, exit: yellowExit, start: yellowStart },
@@ -114,5 +109,5 @@
     return { coefficient: (ra - ya) / approach, approach, separation: ra - ya };
   }
 
-  return { LENGTH_CM, HEIGHT_CM, GRAVITY, SLOPE_COSINE, DISTANCES, ANGLES, add, sub, mul, dot, magnitude, heading, turn, calculate, position, measuredCoefficient };
+  return { LENGTH_CM, HEIGHT_CM, GRAVITY, MASS_G, DIAMETER_CM, SLOPE_COSINE, DISTANCES, ANGLES, add, sub, mul, dot, magnitude, heading, turn, calculate, position, measuredCoefficient };
 });
